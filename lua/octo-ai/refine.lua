@@ -3,23 +3,21 @@ local ui = require("octo-ai.ui")
 
 local M = {}
 
---- Get the comment body at cursor from an Octo buffer.
+local _skip_refine = false
+
 local function get_comment_at_cursor()
   local ok, utils = pcall(require, "octo.utils")
   if not ok then
-    vim.notify("Octo not available", vim.log.levels.ERROR)
     return nil
   end
 
   local buffer = utils.get_current_buffer()
   if not buffer then
-    vim.notify("Not in an Octo buffer", vim.log.levels.WARN)
     return nil
   end
 
   local comment = buffer:get_comment_at_cursor()
   if not comment then
-    vim.notify("No comment at cursor", vim.log.levels.WARN)
     return nil
   end
 
@@ -31,9 +29,7 @@ local function get_comment_at_cursor()
   }
 end
 
---- Get diff context — tries review diff first, then gh pr diff.
 local function get_diff_context()
-  -- Try current review diff (when in review mode)
   local rok, reviews = pcall(require, "octo.reviews")
   if rok then
     local review = reviews.get_current_review()
@@ -45,14 +41,12 @@ local function get_diff_context()
     end
   end
 
-  -- Fall back to gh pr diff
   local ok, utils = pcall(require, "octo.utils")
   if ok then
     local buffer = utils.get_current_buffer()
     if buffer and buffer:isPullRequest() then
       local diff = vim.fn.system({ "gh", "pr", "diff", tostring(buffer.number), "--repo", buffer.repo })
       if vim.v.shell_error == 0 then
-        -- Truncate large diffs
         if #diff > 8000 then
           diff = diff:sub(1, 8000) .. "\n... (truncated)"
         end
@@ -70,10 +64,10 @@ local function replace_comment_body(info, new_body)
   vim.api.nvim_buf_set_lines(info.bufnr, info.start_line, info.end_line + 1, false, lines)
 end
 
---- Refine the comment at cursor.
 function M.refine_comment(feedback)
   local comment_info = get_comment_at_cursor()
   if not comment_info then
+    vim.notify("No comment at cursor", vim.log.levels.WARN)
     return
   end
 
@@ -100,43 +94,55 @@ function M.refine_comment(feedback)
 
     ui.refine_float(comment_info.body, result, function(accepted_text)
       replace_comment_body(comment_info, accepted_text)
-      vim.notify("Comment refined", vim.log.levels.INFO)
+      vim.notify("Comment refined — saving...", vim.log.levels.INFO)
+      -- Save with skip flag so we don't intercept again
+      _skip_refine = true
+      vim.api.nvim_buf_call(comment_info.bufnr, function()
+        vim.cmd("write")
+      end)
     end, function(new_feedback)
       M.refine_comment(new_feedback)
     end)
   end)
 end
 
-function M.setup_auto_refine(augroup)
-  vim.api.nvim_create_autocmd("BufWritePre", {
-    group = augroup,
-    pattern = "octo://*",
-    callback = function(ev)
-      -- Only auto-refine on comment buffers (ft=octo, bt=acwrite)
-      if vim.bo[ev.buf].filetype ~= "octo" or vim.bo[ev.buf].buftype ~= "acwrite" then
-        return
-      end
+--- Wrap octo.save_buffer to intercept saves on comment buffers.
+function M.setup_auto_refine(_)
+  local octo = require("octo")
+  local original_save = octo.save_buffer
 
-      local ok, utils = pcall(require, "octo.utils")
-      if not ok then
-        return
-      end
+  octo.save_buffer = function(...)
+    -- Pass through if skip flag is set
+    if _skip_refine then
+      _skip_refine = false
+      return original_save(...)
+    end
 
-      local buffer = utils.get_current_buffer()
-      if not buffer then
-        return
-      end
+    -- Only intercept on comment buffers (ft=octo, bt=acwrite)
+    local bufnr = vim.api.nvim_get_current_buf()
+    if vim.bo[bufnr].filetype ~= "octo" or vim.bo[bufnr].buftype ~= "acwrite" then
+      return original_save(...)
+    end
 
-      local comment = buffer:get_comment_at_cursor()
-      if not comment or not comment.dirty then
-        return
-      end
+    -- Check if there's a dirty comment worth refining
+    local ok, utils = pcall(require, "octo.utils")
+    if not ok then
+      return original_save(...)
+    end
 
-      vim.schedule(function()
-        M.refine_comment()
-      end)
-    end,
-  })
+    local buffer = utils.get_current_buffer()
+    if not buffer then
+      return original_save(...)
+    end
+
+    local comment = buffer:get_comment_at_cursor()
+    if not comment or vim.trim(comment.body or "") == "" then
+      return original_save(...)
+    end
+
+    -- Intercept: refine first
+    M.refine_comment()
+  end
 end
 
 return M
