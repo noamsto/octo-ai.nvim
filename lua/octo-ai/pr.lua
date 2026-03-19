@@ -10,11 +10,7 @@ local PRESETS = {
   { label = "Custom question...", prompt = nil },
 }
 
---- Get the PR number and repo from the current context.
---- Works from both Octo buffers and Octo diff review buffers.
---- @return { number: integer, repo: string }|nil
 local function get_pr_context()
-  -- Try Octo buffer first
   local ok, utils = pcall(require, "octo.utils")
   if ok then
     local buffer = utils.get_current_buffer()
@@ -23,7 +19,6 @@ local function get_pr_context()
     end
   end
 
-  -- Try review context (diff buffers)
   local rok, reviews = pcall(require, "octo.reviews")
   if rok then
     local review = reviews.get_current_review()
@@ -36,10 +31,6 @@ local function get_pr_context()
   return nil
 end
 
---- Get the full PR diff via gh CLI.
---- @param number integer
---- @param repo string
---- @return string|nil
 local function get_pr_diff(number, repo)
   local diff = vim.fn.system({ "gh", "pr", "diff", tostring(number), "--repo", repo })
   if vim.v.shell_error ~= 0 then
@@ -49,7 +40,6 @@ local function get_pr_diff(number, repo)
   return diff
 end
 
---- Show preset picker, then send to Claude with PR diff.
 function M.prompt()
   local ctx = get_pr_context()
   if not ctx then
@@ -69,7 +59,6 @@ function M.prompt()
     local function run_prompt(question)
       local dismiss = ui.spinner("Claude is reviewing PR #" .. ctx.number)
 
-      -- Get diff asynchronously to not block
       vim.schedule(function()
         local diff = get_pr_diff(ctx.number, ctx.repo)
         if not diff then
@@ -86,7 +75,20 @@ function M.prompt()
           end
 
           local lines = vim.split(result, "\n")
-          ui.open_float("AI — PR #" .. ctx.number, lines, { ft = "markdown" })
+          ui.open_float("AI — PR #" .. ctx.number, lines, {
+            ft = "markdown",
+            keys = {
+              f = {
+                desc = "followup",
+                fn = function(_, winid)
+                  vim.api.nvim_win_close(winid, true)
+                  ui.input("Follow-up question", function(followup)
+                    run_prompt(followup)
+                  end)
+                end,
+              },
+            },
+          })
         end)
       end)
     end

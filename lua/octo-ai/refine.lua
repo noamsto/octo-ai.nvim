@@ -4,8 +4,6 @@ local ui = require("octo-ai.ui")
 local M = {}
 
 --- Get the comment body at cursor from an Octo buffer.
---- Returns the text and metadata needed to replace it.
---- @return { body: string, start_line: integer, end_line: integer, bufnr: integer }|nil
 local function get_comment_at_cursor()
   local ok, utils = pcall(require, "octo.utils")
   if not ok then
@@ -33,40 +31,39 @@ local function get_comment_at_cursor()
   }
 end
 
---- Get diff context for the current Octo buffer/PR.
---- @return string
+--- Get diff context — tries review diff first, then gh pr diff.
 local function get_diff_context()
+  -- Try current review diff (when in review mode)
+  local rok, reviews = pcall(require, "octo.reviews")
+  if rok then
+    local review = reviews.get_current_review()
+    if review and review.layout then
+      local file = review.layout:get_current_file()
+      if file and file.right_lines then
+        return table.concat(file.right_lines, "\n")
+      end
+    end
+  end
+
+  -- Fall back to gh pr diff
   local ok, utils = pcall(require, "octo.utils")
-  if not ok then
-    return ""
+  if ok then
+    local buffer = utils.get_current_buffer()
+    if buffer and buffer:isPullRequest() then
+      local diff = vim.fn.system({ "gh", "pr", "diff", tostring(buffer.number), "--repo", buffer.repo })
+      if vim.v.shell_error == 0 then
+        -- Truncate large diffs
+        if #diff > 8000 then
+          diff = diff:sub(1, 8000) .. "\n... (truncated)"
+        end
+        return diff
+      end
+    end
   end
 
-  local buffer = utils.get_current_buffer()
-  if not buffer or not buffer:isPullRequest() then
-    return ""
-  end
-
-  local pr = buffer:pullRequest()
-  local repo = buffer.repo
-  local number = buffer.number
-
-  -- Get the diff via gh CLI
-  local diff = vim.fn.system({ "gh", "pr", "diff", tostring(number), "--repo", repo })
-  if vim.v.shell_error ~= 0 then
-    return ""
-  end
-
-  -- Truncate if too large (keep first 4000 chars for context)
-  if #diff > 4000 then
-    diff = diff:sub(1, 4000) .. "\n... (truncated)"
-  end
-
-  return diff
+  return ""
 end
 
---- Replace comment body in the Octo buffer.
---- @param info { bufnr: integer, start_line: integer, end_line: integer }
---- @param new_body string
 local function replace_comment_body(info, new_body)
   local lines = vim.split(new_body, "\n")
   vim.bo[info.bufnr].modifiable = true
@@ -74,7 +71,6 @@ local function replace_comment_body(info, new_body)
 end
 
 --- Refine the comment at cursor.
---- @param feedback string|nil Optional feedback for re-refinement
 function M.refine_comment(feedback)
   local comment_info = get_comment_at_cursor()
   if not comment_info then
@@ -106,19 +102,16 @@ function M.refine_comment(feedback)
       replace_comment_body(comment_info, accepted_text)
       vim.notify("Comment refined", vim.log.levels.INFO)
     end, function(new_feedback)
-      -- Re-refine with feedback
       M.refine_comment(new_feedback)
     end)
   end)
 end
 
---- Set up auto-refine: intercept before Octo saves dirty comments.
---- @param augroup integer
 function M.setup_auto_refine(augroup)
   vim.api.nvim_create_autocmd("BufWritePre", {
     group = augroup,
     pattern = "octo://*",
-    callback = function(ev)
+    callback = function()
       local ok, utils = pcall(require, "octo.utils")
       if not ok then
         return
@@ -129,21 +122,14 @@ function M.setup_auto_refine(augroup)
         return
       end
 
-      -- Check if there are dirty comments
       local comment = buffer:get_comment_at_cursor()
       if not comment or not comment.dirty then
         return
       end
 
-      -- Prevent the save, refine first
-      -- The user will save again after accepting
       vim.schedule(function()
         M.refine_comment()
       end)
-
-      -- Return true to prevent the default BufWritePre behavior
-      -- Note: this doesn't actually prevent Octo's BufWriteCmd, so we rely on
-      -- the user accepting/rejecting before the save completes
     end,
   })
 end

@@ -1,12 +1,13 @@
 local M = {}
 
---- Run claude -p with the given prompt. Returns the response text.
---- Runs asynchronously via jobstart to avoid blocking the UI.
+--- Run claude -p with the given prompt via stdin.
 --- @param prompt string The prompt to send
 --- @param callback fun(result: string|nil, err: string|nil)
 function M.ask(prompt, callback)
   local config = require("octo-ai").config
   local cmd = { config.claude_cmd, "-p" }
+  vim.list_extend(cmd, config.claude_args or {})
+
   local stdout_chunks = {}
   local stderr_chunks = {}
 
@@ -38,16 +39,10 @@ function M.ask(prompt, callback)
     end,
   })
 
-  -- Feed prompt via stdin to avoid ARG_MAX limits
   vim.fn.chansend(job_id, prompt)
   vim.fn.chanclose(job_id, "stdin")
 end
 
---- Build a prompt for comment refinement/enrichment.
---- @param comment_body string The user's draft comment
---- @param diff_context string The surrounding diff hunk
---- @param file_content string|nil The full file content for reference
---- @return string
 function M.build_refine_prompt(comment_body, diff_context, file_content)
   local parts = {
     "You are a code review assistant. Refine and enrich the following PR review comment.",
@@ -81,12 +76,6 @@ function M.build_refine_prompt(comment_body, diff_context, file_content)
   return table.concat(parts, "\n")
 end
 
---- Build a prompt for contextual diff questions.
---- @param question string The user's question
---- @param hunk string The diff hunk
---- @param file_path string The file path
---- @param file_content string|nil Full file content
---- @return string
 function M.build_diff_prompt(question, hunk, file_path, file_content)
   local parts = {
     "You are a code review assistant. Answer the reviewer's question about this code change.",
@@ -114,10 +103,6 @@ function M.build_diff_prompt(question, hunk, file_path, file_content)
   return table.concat(parts, "\n")
 end
 
---- Build a prompt for PR-level questions.
---- @param question string The user's question
---- @param diff string The full PR diff
---- @return string
 function M.build_pr_prompt(question, diff)
   return table.concat({
     "You are a code review assistant. Answer the reviewer's question about this pull request.",

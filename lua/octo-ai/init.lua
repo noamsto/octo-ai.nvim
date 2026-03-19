@@ -3,6 +3,7 @@ local M = {}
 local defaults = {
   comment_refine = "on-demand", -- "auto" | "on-demand" | "off"
   claude_cmd = "claude",
+  claude_args = {}, -- extra args, e.g. {"--model", "sonnet"} or {"--fast"}
   keymaps = {
     refine = "<leader>ar",
     prompt_diff = "<leader>ap",
@@ -12,7 +13,6 @@ local defaults = {
 
 M.config = vim.deepcopy(defaults)
 
---- Apply keymaps to a single octo buffer.
 local function apply_octo_keymaps(bufnr)
   local km = M.config.keymaps
   local opts = { buffer = bufnr, silent = true }
@@ -28,7 +28,6 @@ local function apply_octo_keymaps(bufnr)
   end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
 end
 
---- Apply keymaps to a diff review buffer.
 local function apply_diff_keymaps(bufnr)
   local km = M.config.keymaps
   local opts = { buffer = bufnr, silent = true }
@@ -40,6 +39,12 @@ local function apply_diff_keymaps(bufnr)
   vim.keymap.set("n", km.prompt_pr, function()
     require("octo-ai.pr").prompt()
   end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
+
+  if M.config.comment_refine ~= "off" then
+    vim.keymap.set("n", km.refine, function()
+      require("octo-ai.refine").refine_comment()
+    end, vim.tbl_extend("force", opts, { desc = "AI: Refine comment" }))
+  end
 end
 
 function M.setup(opts)
@@ -47,7 +52,6 @@ function M.setup(opts)
 
   local group = vim.api.nvim_create_augroup("OctoAI", { clear = true })
 
-  -- Apply to future octo buffers
   vim.api.nvim_create_autocmd("FileType", {
     group = group,
     pattern = { "octo", "markdown.gh" },
@@ -56,7 +60,6 @@ function M.setup(opts)
     end,
   })
 
-  -- Apply to future diff review buffers
   vim.api.nvim_create_autocmd("BufEnter", {
     group = group,
     callback = function(ev)
@@ -67,7 +70,6 @@ function M.setup(opts)
     end,
   })
 
-  -- Apply to already-open octo buffers (when loaded via ft event)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) then
       local ft = vim.bo[bufnr].filetype

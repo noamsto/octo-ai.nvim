@@ -1,27 +1,55 @@
 local M = {}
 
---- Create a floating window with the given content.
---- @param title string Window title
---- @param lines string[] Content lines
---- @param opts? { ft?: string, width?: number, height?: number, on_key?: table<string, fun(bufnr: integer, winid: integer)> }
---- @return integer bufnr
---- @return integer winid
-function M.open_float(title, lines, opts)
+--- Calculate float dimensions based on content and current editor size.
+local function calc_dimensions(lines, opts)
   opts = opts or {}
-
-  local max_width = math.floor(vim.o.columns * 0.8)
-  local max_height = math.floor(vim.o.lines * 0.7)
+  local max_width = math.floor(vim.o.columns * 0.85)
+  local max_height = math.floor(vim.o.lines * 0.8)
 
   local width = opts.width or 0
   for _, line in ipairs(lines) do
     width = math.max(width, vim.api.nvim_strwidth(line))
   end
-  width = math.min(width + 2, max_width)
+  width = math.min(math.max(width + 4, 60), max_width)
 
-  local height = opts.height or math.min(#lines, max_height)
+  local height = opts.height or math.min(#lines + 2, max_height)
 
   local row = math.floor((vim.o.lines - height) / 2)
   local col = math.floor((vim.o.columns - width) / 2)
+
+  return { width = width, height = height, row = row, col = col }
+end
+
+--- Build a footer string from keybinding descriptions.
+--- @param keys table<string, string> e.g. { q = "close", c = "comment", f = "followup" }
+--- @return string
+local function build_footer(keys)
+  local parts = {}
+  for key, desc in pairs(keys) do
+    table.insert(parts, key .. " " .. desc)
+  end
+  table.sort(parts)
+  return " " .. table.concat(parts, "  │  ") .. " "
+end
+
+--- Create a floating window with content, footer keybindings, and auto-resize.
+--- @param title string Window title
+--- @param lines string[] Content lines
+--- @param opts? { ft?: string, width?: number, height?: number, keys?: table<string, {desc: string, fn: fun(bufnr: integer, winid: integer)}> }
+--- @return integer bufnr
+--- @return integer winid
+function M.open_float(title, lines, opts)
+  opts = opts or {}
+  local key_defs = opts.keys or {}
+
+  -- Build footer from key definitions
+  local footer_keys = { q = "close" }
+  for key, def in pairs(key_defs) do
+    footer_keys[key] = def.desc
+  end
+  local footer = build_footer(footer_keys)
+
+  local dim = calc_dimensions(lines, opts)
 
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
@@ -33,14 +61,16 @@ function M.open_float(title, lines, opts)
 
   local winid = vim.api.nvim_open_win(bufnr, true, {
     relative = "editor",
-    row = row,
-    col = col,
-    width = width,
-    height = height,
+    row = dim.row,
+    col = dim.col,
+    width = dim.width,
+    height = dim.height,
     style = "minimal",
     border = "rounded",
     title = " " .. title .. " ",
     title_pos = "center",
+    footer = footer,
+    footer_pos = "center",
   })
 
   -- q always closes
@@ -50,19 +80,46 @@ function M.open_float(title, lines, opts)
     end
   end, { buffer = bufnr, silent = true })
 
-  -- Register custom keymaps
-  if opts.on_key then
-    for key, fn in pairs(opts.on_key) do
-      vim.keymap.set("n", key, function()
-        fn(bufnr, winid)
-      end, { buffer = bufnr, silent = true })
-    end
+  -- Register action keymaps
+  for key, def in pairs(key_defs) do
+    vim.keymap.set("n", key, function()
+      def.fn(bufnr, winid)
+    end, { buffer = bufnr, silent = true, desc = def.desc })
   end
+
+  -- Auto-resize on VimResized (tmux pane zoom, terminal resize)
+  local resize_group = vim.api.nvim_create_augroup("OctoAIFloat" .. bufnr, { clear = true })
+  vim.api.nvim_create_autocmd("VimResized", {
+    group = resize_group,
+    callback = function()
+      if not vim.api.nvim_win_is_valid(winid) then
+        pcall(vim.api.nvim_del_augroup_by_id, resize_group)
+        return
+      end
+      local new_dim = calc_dimensions(lines, opts)
+      vim.api.nvim_win_set_config(winid, {
+        relative = "editor",
+        row = new_dim.row,
+        col = new_dim.col,
+        width = new_dim.width,
+        height = new_dim.height,
+      })
+    end,
+  })
+
+  -- Cleanup augroup when buffer is wiped
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = resize_group,
+    buffer = bufnr,
+    callback = function()
+      pcall(vim.api.nvim_del_augroup_by_id, resize_group)
+    end,
+  })
 
   return bufnr, winid
 end
 
---- Open a small input prompt float. Calls callback with the input text.
+--- Open a small input prompt. Calls callback with the input text.
 --- @param title string
 --- @param callback fun(input: string)
 function M.input(title, callback)
@@ -73,25 +130,42 @@ function M.input(title, callback)
   end)
 end
 
---- Show a spinner notification while waiting for Claude.
---- Returns a function to dismiss it.
+--- Show a persistent spinner notification while Claude is working.
 --- @param msg string
 --- @return fun()
 function M.spinner(msg)
-  local id = vim.notify(msg .. " ...", vim.log.levels.INFO, { title = "octo-ai" })
+  -- nerd: nf-md-robot
+  local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+  local idx = 1
+  local timer = vim.uv.new_timer()
+  local notif_id = nil
+
+  local function update()
+    idx = (idx % #frames) + 1
+    notif_id = vim.notify(frames[idx] .. " " .. msg, vim.log.levels.INFO, {
+      title = "octo-ai",
+      replace = notif_id,
+      timeout = false,
+    })
+  end
+
+  update()
+  timer:start(100, 100, vim.schedule_wrap(update))
+
   return function()
-    -- Dismiss by replacing with empty (works with nvim-notify and default)
-    if id then
-      pcall(vim.notify, "", vim.log.levels.INFO, { replace = id, title = "octo-ai" })
+    timer:stop()
+    timer:close()
+    if notif_id then
+      pcall(vim.notify, "Done", vim.log.levels.INFO, { replace = notif_id, title = "octo-ai", timeout = 2000 })
     end
   end
 end
 
 --- Show the accept/reject/refine float for comment refinement.
---- @param original string Original comment
---- @param refined string AI-refined comment
---- @param on_accept fun(text: string) Called with accepted text
---- @param on_refine fun(feedback: string) Called to re-prompt with feedback
+--- @param original string
+--- @param refined string
+--- @param on_accept fun(text: string)
+--- @param on_refine fun(feedback: string)
 function M.refine_float(original, refined, on_accept, on_refine)
   local lines = {}
   table.insert(lines, "── Original ──")
@@ -103,25 +177,31 @@ function M.refine_float(original, refined, on_accept, on_refine)
   for _, l in ipairs(vim.split(refined, "\n")) do
     table.insert(lines, l)
   end
-  table.insert(lines, "")
-  table.insert(lines, "─────────────────────────────────────")
-  table.insert(lines, "  a = accept  |  x = reject  |  r = refine")
 
   M.open_float("Comment Refine", lines, {
     ft = "markdown",
-    on_key = {
-      a = function(_, winid)
-        vim.api.nvim_win_close(winid, true)
-        on_accept(refined)
-      end,
-      x = function(_, winid)
-        vim.api.nvim_win_close(winid, true)
-        vim.notify("AI refinement rejected", vim.log.levels.INFO)
-      end,
-      r = function(_, winid)
-        vim.api.nvim_win_close(winid, true)
-        M.input("Refinement feedback", on_refine)
-      end,
+    keys = {
+      a = {
+        desc = "accept",
+        fn = function(_, winid)
+          vim.api.nvim_win_close(winid, true)
+          on_accept(refined)
+        end,
+      },
+      x = {
+        desc = "reject",
+        fn = function(_, winid)
+          vim.api.nvim_win_close(winid, true)
+          vim.notify("AI refinement rejected", vim.log.levels.INFO)
+        end,
+      },
+      r = {
+        desc = "refine",
+        fn = function(_, winid)
+          vim.api.nvim_win_close(winid, true)
+          M.input("Refinement feedback", on_refine)
+        end,
+      },
     },
   })
 end
