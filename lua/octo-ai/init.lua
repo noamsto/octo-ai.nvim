@@ -5,9 +5,9 @@ local defaults = {
   claude_cmd = "claude",
   claude_args = {}, -- extra args, e.g. {"--model", "sonnet"} or {"--fast"}
   keymaps = {
-    refine = "<localleader>ir",
-    prompt_diff = "<localleader>ip",
-    prompt_pr = "<localleader>ia",
+    refine = "<localleader>Ar",
+    prompt_diff = "<localleader>Ap",
+    prompt_pr = "<localleader>Aa",
   },
 }
 
