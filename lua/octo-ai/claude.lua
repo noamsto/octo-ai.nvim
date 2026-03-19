@@ -6,7 +6,7 @@ local M = {}
 --- @param callback fun(result: string|nil, err: string|nil)
 function M.ask(prompt, callback)
   local config = require("octo-ai").config
-  local cmd = { config.claude_cmd, "-p", "--" }
+  local cmd = { config.claude_cmd, "-p" }
   local stdout_chunks = {}
   local stderr_chunks = {}
 
