@@ -26,8 +26,10 @@ function M.ask(prompt, callback)
     on_exit = function(_, code)
       vim.schedule(function()
         if code ~= 0 then
-          local err = table.concat(stderr_chunks, "\n")
-          callback(nil, "Claude failed (exit " .. code .. "): " .. err)
+          local err = vim.trim(table.concat(stderr_chunks, "\n"))
+          local out = vim.trim(table.concat(stdout_chunks, "\n"))
+          local msg = err ~= "" and err or out
+          callback(nil, "Claude failed (exit " .. code .. "): " .. msg)
           return
         end
         local result = vim.trim(table.concat(stdout_chunks, "\n"))
