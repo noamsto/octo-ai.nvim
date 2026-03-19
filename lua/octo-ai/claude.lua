@@ -6,11 +6,11 @@ local M = {}
 --- @param callback fun(result: string|nil, err: string|nil)
 function M.ask(prompt, callback)
   local config = require("octo-ai").config
-  local cmd = { config.claude_cmd, "-p", prompt }
+  local cmd = { config.claude_cmd, "-p", "--" }
   local stdout_chunks = {}
   local stderr_chunks = {}
 
-  vim.fn.jobstart(cmd, {
+  local job_id = vim.fn.jobstart(cmd, {
     stdout_buffered = true,
     stderr_buffered = true,
     on_stdout = function(_, data)
@@ -35,6 +35,10 @@ function M.ask(prompt, callback)
       end)
     end,
   })
+
+  -- Feed prompt via stdin to avoid ARG_MAX limits
+  vim.fn.chansend(job_id, prompt)
+  vim.fn.chanclose(job_id, "stdin")
 end
 
 --- Build a prompt for comment refinement/enrichment.
