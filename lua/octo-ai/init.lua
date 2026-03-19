@@ -58,10 +58,18 @@ function M.setup(opts)
 
   local group = vim.api.nvim_create_augroup("OctoAI", { clear = true })
 
-  -- Comment/thread buffers: ft=octo
+  -- Comment/thread buffers: ft=octo or name matches octo://*/threads/*
   vim.api.nvim_create_autocmd("FileType", {
     group = group,
     pattern = "octo",
+    callback = function(ev)
+      apply_comment_keymaps(ev.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufReadPost" }, {
+    group = group,
+    pattern = "octo://*/review/*/threads/*",
     callback = function(ev)
       apply_comment_keymaps(ev.buf)
     end,
@@ -76,14 +84,12 @@ function M.setup(opts)
     end,
   })
 
-  -- Diff review buffers: have octo_diff_props
-  vim.api.nvim_create_autocmd("BufEnter", {
+  -- Diff review buffers: name matches octo://*/review/*/file/*
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufReadPost" }, {
     group = group,
+    pattern = "octo://*/review/*/file/*",
     callback = function(ev)
-      local ok = pcall(vim.api.nvim_buf_get_var, ev.buf, "octo_diff_props")
-      if ok then
-        apply_diff_keymaps(ev.buf)
-      end
+      apply_diff_keymaps(ev.buf)
     end,
   })
 
@@ -96,8 +102,8 @@ function M.setup(opts)
       elseif ft == "markdown.gh" then
         apply_pr_keymaps(bufnr)
       end
-      local ok = pcall(vim.api.nvim_buf_get_var, bufnr, "octo_diff_props")
-      if ok then
+      local name = vim.api.nvim_buf_get_name(bufnr)
+      if name:match("^octo://.*/review/.*/file/") then
         apply_diff_keymaps(bufnr)
       end
     end
