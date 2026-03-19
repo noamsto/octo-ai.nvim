@@ -134,17 +134,18 @@ end
 --- @param msg string
 --- @return fun()
 function M.spinner(msg)
-  -- nerd: nf-md-robot
   local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
   local idx = 1
   local timer = vim.uv.new_timer()
-  local notif_id = nil
+
+  -- Use a fixed ID so replace always targets the same notification
+  local id = "octo_ai_spinner"
 
   local function update()
     idx = (idx % #frames) + 1
-    notif_id = vim.notify(frames[idx] .. " " .. msg, vim.log.levels.INFO, {
+    vim.notify(frames[idx] .. " " .. msg, vim.log.levels.INFO, {
       title = "octo-ai",
-      replace = notif_id,
+      id = id,
       timeout = false,
     })
   end
@@ -155,9 +156,7 @@ function M.spinner(msg)
   return function()
     timer:stop()
     timer:close()
-    if notif_id then
-      pcall(vim.notify, "Done", vim.log.levels.INFO, { replace = notif_id, title = "octo-ai", timeout = 2000 })
-    end
+    vim.notify("Done", vim.log.levels.INFO, { title = "octo-ai", id = id, timeout = 2000 })
   end
 end
 
