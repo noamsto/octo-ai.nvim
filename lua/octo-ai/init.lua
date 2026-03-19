@@ -13,7 +13,8 @@ local defaults = {
 
 M.config = vim.deepcopy(defaults)
 
-local function apply_octo_keymaps(bufnr)
+--- Apply keymaps to comment/thread buffers (ft=octo, bt=acwrite).
+local function apply_comment_keymaps(bufnr)
   local km = M.config.keymaps
   local opts = { buffer = bufnr, silent = true }
 
@@ -28,6 +29,17 @@ local function apply_octo_keymaps(bufnr)
   end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
 end
 
+--- Apply keymaps to PR description buffers (ft=markdown.gh).
+local function apply_pr_keymaps(bufnr)
+  local km = M.config.keymaps
+  local opts = { buffer = bufnr, silent = true }
+
+  vim.keymap.set("n", km.prompt_pr, function()
+    require("octo-ai.pr").prompt()
+  end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
+end
+
+--- Apply keymaps to diff review buffers (octo_diff_props set).
 local function apply_diff_keymaps(bufnr)
   local km = M.config.keymaps
   local opts = { buffer = bufnr, silent = true }
@@ -39,12 +51,6 @@ local function apply_diff_keymaps(bufnr)
   vim.keymap.set("n", km.prompt_pr, function()
     require("octo-ai.pr").prompt()
   end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
-
-  if M.config.comment_refine ~= "off" then
-    vim.keymap.set("n", km.refine, function()
-      require("octo-ai.refine").refine_comment()
-    end, vim.tbl_extend("force", opts, { desc = "AI: Refine comment" }))
-  end
 end
 
 function M.setup(opts)
@@ -52,14 +58,25 @@ function M.setup(opts)
 
   local group = vim.api.nvim_create_augroup("OctoAI", { clear = true })
 
+  -- Comment/thread buffers: ft=octo
   vim.api.nvim_create_autocmd("FileType", {
     group = group,
-    pattern = { "octo", "markdown.gh" },
+    pattern = "octo",
     callback = function(ev)
-      apply_octo_keymaps(ev.buf)
+      apply_comment_keymaps(ev.buf)
     end,
   })
 
+  -- PR description buffers: ft=markdown.gh
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    pattern = "markdown.gh",
+    callback = function(ev)
+      apply_pr_keymaps(ev.buf)
+    end,
+  })
+
+  -- Diff review buffers: have octo_diff_props
   vim.api.nvim_create_autocmd("BufEnter", {
     group = group,
     callback = function(ev)
@@ -70,11 +87,14 @@ function M.setup(opts)
     end,
   })
 
+  -- Apply to already-open buffers
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) then
       local ft = vim.bo[bufnr].filetype
-      if ft == "octo" or ft == "markdown.gh" then
-        apply_octo_keymaps(bufnr)
+      if ft == "octo" then
+        apply_comment_keymaps(bufnr)
+      elseif ft == "markdown.gh" then
+        apply_pr_keymaps(bufnr)
       end
       local ok = pcall(vim.api.nvim_buf_get_var, bufnr, "octo_diff_props")
       if ok then
