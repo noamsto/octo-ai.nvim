@@ -50,7 +50,7 @@ function M.setup(opts)
   -- Apply to future octo buffers
   vim.api.nvim_create_autocmd("FileType", {
     group = group,
-    pattern = "octo",
+    pattern = { "octo", "markdown.gh" },
     callback = function(ev)
       apply_octo_keymaps(ev.buf)
     end,
@@ -70,7 +70,8 @@ function M.setup(opts)
   -- Apply to already-open octo buffers (when loaded via ft event)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) then
-      if vim.bo[bufnr].filetype == "octo" then
+      local ft = vim.bo[bufnr].filetype
+      if ft == "octo" or ft == "markdown.gh" then
         apply_octo_keymaps(bufnr)
       end
       local ok = pcall(vim.api.nvim_buf_get_var, bufnr, "octo_diff_props")
