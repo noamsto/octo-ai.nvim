@@ -111,7 +111,12 @@ function M.setup_auto_refine(augroup)
   vim.api.nvim_create_autocmd("BufWritePre", {
     group = augroup,
     pattern = "octo://*",
-    callback = function()
+    callback = function(ev)
+      -- Only auto-refine on comment buffers (ft=octo, bt=acwrite)
+      if vim.bo[ev.buf].filetype ~= "octo" or vim.bo[ev.buf].buftype ~= "acwrite" then
+        return
+      end
+
       local ok, utils = pcall(require, "octo.utils")
       if not ok then
         return
