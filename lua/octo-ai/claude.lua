@@ -1,11 +1,103 @@
 local M = {}
 
+local active_sessions = {}
+
+--- Run a command asynchronously, collecting stdout.
+--- @param cmd string[] Command and arguments
+--- @param callback fun(stdout: string|nil, err: string|nil)
+function M.run_cmd(cmd, callback)
+  local stdout_chunks = {}
+  local stderr_chunks = {}
+
+  local job_id = vim.fn.jobstart(cmd, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data)
+      if data then
+        vim.list_extend(stdout_chunks, data)
+      end
+    end,
+    on_stderr = function(_, data)
+      if data then
+        vim.list_extend(stderr_chunks, data)
+      end
+    end,
+    on_exit = function(_, code)
+      vim.schedule(function()
+        if code ~= 0 then
+          callback(nil, vim.trim(table.concat(stderr_chunks, "\n")))
+          return
+        end
+        callback(vim.trim(table.concat(stdout_chunks, "\n")))
+      end)
+    end,
+  })
+
+  if job_id <= 0 then
+    callback(nil, "Failed to start command: " .. cmd[1])
+  end
+end
+
+--- Truncate a string to max_chars, appending a truncation marker.
+--- @param str string
+--- @param max_chars number
+--- @return string
+function M.truncate(str, max_chars)
+  if #str > max_chars then
+    return str:sub(1, max_chars) .. "\n... (truncated)"
+  end
+  return str
+end
+
+--- Get the current PR context (repo + number) from octo.
+--- Tries the active review first, then the current buffer.
+--- @param opts? {silent?: boolean}
+--- @return {repo: string, number: number}|nil
+function M.get_pr_context(opts)
+  local rok, reviews = pcall(require, "octo.reviews")
+  if rok then
+    local review = reviews.get_current_review()
+    if review then
+      return { number = review.pull_request.number, repo = review.repo }
+    end
+  end
+
+  local ok, utils = pcall(require, "octo.utils")
+  if ok then
+    local buffer = utils.get_current_buffer()
+    if buffer and buffer:isPullRequest() then
+      return { number = buffer.number, repo = buffer.repo }
+    end
+  end
+
+  if not (opts and opts.silent) then
+    vim.notify("Not in a PR context", vim.log.levels.WARN)
+  end
+  return nil
+end
+
 --- Run claude -p with the given prompt via stdin.
 --- @param prompt string The prompt to send
+--- @param opts? {session?: string} Options (session: named session to create/resume)
 --- @param callback fun(result: string|nil, err: string|nil)
-function M.ask(prompt, callback)
+function M.ask(prompt, opts, callback)
+  if type(opts) == "function" then
+    callback = opts
+    opts = {}
+  end
+  opts = opts or {}
+
   local config = require("octo-ai").config
   local cmd = { config.claude_cmd, "-p" }
+
+  if opts.session then
+    if active_sessions[opts.session] then
+      vim.list_extend(cmd, { "-r", opts.session })
+    else
+      vim.list_extend(cmd, { "-n", opts.session })
+    end
+  end
+
   vim.list_extend(cmd, config.claude_args or {})
 
   local stdout_chunks = {}
@@ -32,6 +124,9 @@ function M.ask(prompt, callback)
           local msg = err ~= "" and err or out
           callback(nil, "Claude failed (exit " .. code .. "): " .. msg)
           return
+        end
+        if opts.session then
+          active_sessions[opts.session] = true
         end
         local result = vim.trim(table.concat(stdout_chunks, "\n"))
         callback(result)
@@ -122,6 +217,49 @@ function M.build_pr_prompt(question, diff)
     "## Question",
     question,
   }, "\n")
+end
+
+local session_cache = {} -- scope_key -> last resolved session name
+
+--- Resolve a review session name, fetching HEAD SHA to detect PR updates.
+--- Calls callback(session_name) with a name like "review: repo#42 @abc1234".
+--- If the SHA changed since last call, the old session is automatically invalidated.
+--- @param repo string e.g. "owner/repo"
+--- @param number number PR number
+--- @param suffix? string optional scope (e.g. file path, "refine")
+--- @param callback fun(session: string)
+function M.resolve_session(repo, number, suffix, callback)
+  local scope_key = repo .. "#" .. number
+  if suffix then
+    scope_key = scope_key .. "-" .. suffix
+  end
+
+  M.run_cmd(
+    { "gh", "pr", "view", tostring(number), "--repo", repo, "--json", "headRefOid", "-q", ".headRefOid" },
+    function(sha)
+      local name = "review: " .. repo .. "#" .. number
+      if suffix then
+        name = name .. " — " .. suffix
+      end
+
+      if sha and sha ~= "" then
+        name = name .. " @" .. sha:sub(1, 7)
+      end
+
+      local old_name = session_cache[scope_key]
+      if old_name and old_name ~= name then
+        active_sessions[old_name] = nil
+      end
+      session_cache[scope_key] = name
+
+      callback(name)
+    end
+  )
+end
+
+--- Forget a session so the next ask() creates a fresh one.
+function M.clear_session(name)
+  active_sessions[name] = nil
 end
 
 return M

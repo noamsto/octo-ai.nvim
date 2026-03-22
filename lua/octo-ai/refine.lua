@@ -5,6 +5,15 @@ local M = {}
 
 local MAX_CONTEXT_CHARS = 8000
 
+local function resolve_refine_session(callback)
+  local ctx = claude.get_pr_context({ silent = true })
+  if ctx then
+    claude.resolve_session(ctx.repo, ctx.number, "refine", callback)
+  else
+    callback(nil)
+  end
+end
+
 local function get_comment_at_cursor()
   local ok, utils = pcall(require, "octo.utils")
   if not ok then
@@ -41,42 +50,18 @@ local function get_diff_context(callback)
     if review and review.layout then
       local file = review.layout:get_current_file()
       if file and file.right_lines then
-        local content = table.concat(file.right_lines, "\n")
-        if #content > MAX_CONTEXT_CHARS then
-          content = content:sub(1, MAX_CONTEXT_CHARS) .. "\n... (truncated)"
-        end
-        callback(content)
+        callback(claude.truncate(table.concat(file.right_lines, "\n"), MAX_CONTEXT_CHARS))
         return
       end
     end
   end
 
-  local ok, utils = pcall(require, "octo.utils")
-  if ok then
-    local buffer = utils.get_current_buffer()
-    if buffer and buffer:isPullRequest() then
-      local stdout_chunks = {}
-      local job_id = vim.fn.jobstart({ "gh", "pr", "diff", tostring(buffer.number), "--repo", buffer.repo }, {
-        stdout_buffered = true,
-        on_stdout = function(_, data)
-          if data then vim.list_extend(stdout_chunks, data) end
-        end,
-        on_exit = function(_, code)
-          vim.schedule(function()
-            if code == 0 then
-              local diff = vim.trim(table.concat(stdout_chunks, "\n"))
-              if #diff > MAX_CONTEXT_CHARS then
-                diff = diff:sub(1, MAX_CONTEXT_CHARS) .. "\n... (truncated)"
-              end
-              callback(diff)
-            else
-              callback("")
-            end
-          end)
-        end,
-      })
-      if job_id > 0 then return end
-    end
+  local ctx = claude.get_pr_context({ silent = true })
+  if ctx then
+    claude.run_cmd({ "gh", "pr", "diff", tostring(ctx.number), "--repo", ctx.repo }, function(stdout)
+      callback(stdout and claude.truncate(stdout, MAX_CONTEXT_CHARS) or "")
+    end)
+    return
   end
 
   callback("")
@@ -105,7 +90,7 @@ local function replace_comment_body(info, new_body)
   return true
 end
 
-function M.refine_comment(feedback)
+function M.refine_comment(feedback, session)
   local comment_info = get_comment_at_cursor()
   if not comment_info then
     vim.notify("No comment at cursor", vim.log.levels.WARN)
@@ -119,33 +104,44 @@ function M.refine_comment(feedback)
 
   local dismiss = ui.spinner("Refining comment")
 
-  get_diff_context(function(diff_context)
-    local prompt = claude.build_refine_prompt(comment_info.body, diff_context, nil)
-
-    if feedback then
-      prompt = prompt .. "\n\n## Reviewer feedback on previous refinement\n" .. feedback
-    end
-
-    claude.ask(prompt, function(result, err)
-      dismiss()
-      if err then
-        vim.notify(err, vim.log.levels.ERROR)
-        return
+  local function do_refine(sess)
+    get_diff_context(function(diff_context)
+      local prompt
+      if feedback and sess then
+        prompt = "Refine the comment again based on this feedback:\n" .. feedback
+      else
+        prompt = claude.build_refine_prompt(comment_info.body, diff_context, nil)
+        if feedback then
+          prompt = prompt .. "\n\n## Reviewer feedback on previous refinement\n" .. feedback
+        end
       end
 
-      ui.refine_float(comment_info.body, result, function(accepted_text)
-        if not replace_comment_body(comment_info, accepted_text) then return end
-        vim.notify("Comment refined — saving...", vim.log.levels.INFO)
-        -- Buffer-local skip flag so we don't intercept this save
-        vim.b[comment_info.bufnr]._octo_ai_skip_refine = true
-        vim.api.nvim_buf_call(comment_info.bufnr, function()
-          vim.cmd("write")
+      claude.ask(prompt, { session = sess }, function(result, err)
+        dismiss()
+        if err then
+          vim.notify(err, vim.log.levels.ERROR)
+          return
+        end
+
+        ui.refine_float(comment_info.body, result, function(accepted_text)
+          if not replace_comment_body(comment_info, accepted_text) then return end
+          vim.notify("Comment refined — saving...", vim.log.levels.INFO)
+          vim.b[comment_info.bufnr]._octo_ai_skip_refine = true
+          vim.api.nvim_buf_call(comment_info.bufnr, function()
+            vim.cmd("write")
+          end)
+        end, function(new_feedback)
+          M.refine_comment(new_feedback, sess)
         end)
-      end, function(new_feedback)
-        M.refine_comment(new_feedback)
       end)
     end)
-  end)
+  end
+
+  if session then
+    do_refine(session)
+  else
+    resolve_refine_session(do_refine)
+  end
 end
 
 --- Wrap octo.save_buffer to intercept saves on comment buffers.

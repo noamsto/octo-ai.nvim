@@ -13,8 +13,16 @@ local defaults = {
 
 M.config = vim.deepcopy(defaults)
 
---- Apply keymaps to comment/thread buffers (ft=octo, bt=acwrite).
+local function keymaps_applied(bufnr)
+  if vim.b[bufnr]._octo_ai_keymaps then
+    return true
+  end
+  vim.b[bufnr]._octo_ai_keymaps = true
+  return false
+end
+
 local function apply_comment_keymaps(bufnr)
+  if keymaps_applied(bufnr) then return end
   local km = M.config.keymaps
   local opts = { buffer = bufnr, silent = true }
 
@@ -29,8 +37,8 @@ local function apply_comment_keymaps(bufnr)
   end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
 end
 
---- Apply keymaps to PR description buffers (ft=markdown.gh).
 local function apply_pr_keymaps(bufnr)
+  if keymaps_applied(bufnr) then return end
   local km = M.config.keymaps
   local opts = { buffer = bufnr, silent = true }
 
@@ -39,8 +47,8 @@ local function apply_pr_keymaps(bufnr)
   end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
 end
 
---- Apply keymaps to diff review buffers (octo_diff_props set).
 local function apply_diff_keymaps(bufnr)
+  if keymaps_applied(bufnr) then return end
   local km = M.config.keymaps
   local opts = { buffer = bufnr, silent = true }
 

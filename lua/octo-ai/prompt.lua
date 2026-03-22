@@ -26,10 +26,7 @@ local function get_diff_context()
       local file = current_review.layout:get_current_file()
       if file then
         if file.right_lines then
-          file_content = table.concat(file.right_lines, "\n")
-          if #file_content > MAX_CONTENT_CHARS then
-            file_content = file_content:sub(1, MAX_CONTENT_CHARS) .. "\n... (truncated)"
-          end
+          file_content = claude.truncate(table.concat(file.right_lines, "\n"), MAX_CONTENT_CHARS)
         end
 
         local win = vim.api.nvim_get_current_win()
@@ -67,7 +64,7 @@ local function get_diff_context()
 end
 
 --- Show Claude's response in a float with copy/followup keys.
-local function show_response(context, result)
+local function show_response(context, session, result)
   local lines = vim.split(result, "\n")
   ui.open_float("AI — " .. context.path, lines, {
     ft = "markdown",
@@ -85,7 +82,7 @@ local function show_response(context, result)
         fn = function(_, winid)
           vim.api.nvim_win_close(winid, true)
           ui.input("Follow-up question", function(followup)
-            M.prompt_diff_with(followup, context)
+            M.prompt_diff_followup(followup, context, session)
           end)
         end,
       },
@@ -99,33 +96,41 @@ function M.prompt_diff()
     return
   end
 
-  ui.input("Ask about this code", function(question)
-    local prompt = claude.build_diff_prompt(question, context.hunk, context.path, context.file_content)
-    local dismiss = ui.spinner("Asking Claude")
+  local function start(session)
+    ui.input("Ask about this code", function(question)
+      local prompt = claude.build_diff_prompt(question, context.hunk, context.path, context.file_content)
+      local dismiss = ui.spinner("Asking Claude")
 
-    claude.ask(prompt, function(result, err)
-      dismiss()
-      if err then
-        vim.notify(err, vim.log.levels.ERROR)
-        return
-      end
-      show_response(context, result)
+      claude.ask(prompt, { session = session }, function(result, err)
+        dismiss()
+        if err then
+          vim.notify(err, vim.log.levels.ERROR)
+          return
+        end
+        show_response(context, session, result)
+      end)
     end)
-  end)
+  end
+
+  local ctx = claude.get_pr_context({ silent = true })
+  if ctx then
+    claude.resolve_session(ctx.repo, ctx.number, context.path, start)
+  else
+    start(nil)
+  end
 end
 
---- Run a follow-up question with existing context.
-function M.prompt_diff_with(question, context)
-  local prompt = claude.build_diff_prompt(question, context.hunk, context.path, context.file_content)
+--- Run a follow-up question using the existing session (no context rebuild).
+function M.prompt_diff_followup(question, context, session)
   local dismiss = ui.spinner("Asking Claude")
 
-  claude.ask(prompt, function(result, err)
+  claude.ask(question, { session = session }, function(result, err)
     dismiss()
     if err then
       vim.notify(err, vim.log.levels.ERROR)
       return
     end
-    show_response(context, result)
+    show_response(context, session, result)
   end)
 end
 
