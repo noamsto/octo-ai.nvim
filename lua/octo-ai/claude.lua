@@ -57,15 +57,15 @@ function M.get_pr_context(opts)
   local rok, reviews = pcall(require, "octo.reviews")
   if rok then
     local review = reviews.get_current_review()
-    if review then
-      return { number = review.pull_request.number, repo = review.repo }
+    if review and review.pull_request then
+      return { number = review.pull_request.number, repo = review.pull_request.repo }
     end
   end
 
   local ok, utils = pcall(require, "octo.utils")
   if ok then
     local buffer = utils.get_current_buffer()
-    if buffer and buffer:isPullRequest() then
+    if buffer and buffer:isPullRequest() and buffer.repo then
       return { number = buffer.number, repo = buffer.repo }
     end
   end
