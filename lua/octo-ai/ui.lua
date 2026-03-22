@@ -14,15 +14,8 @@ local function calc_dimensions(lines, opts)
 
   local height = opts.height or math.min(#lines + 2, max_height)
 
-  -- Position near cursor: 1 row below, right-aligned to avoid covering code
-  local cursor_row = vim.fn.screenrow()
-  local row = cursor_row
-  -- If it would overflow the bottom, flip above the cursor
-  if row + height > vim.o.lines - 2 then
-    row = math.max(0, cursor_row - height - 1)
-  end
-  -- Right-align with padding, leaving the left side (diff/code) visible
-  local col = math.max(0, vim.o.columns - width - 2)
+  local row = math.floor(vim.o.lines / 3)
+  local col = math.floor((vim.o.columns - width) / 2)
 
   return { width = width, height = height, row = row, col = col }
 end
