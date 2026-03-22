@@ -12,7 +12,13 @@ local function calc_dimensions(lines, opts)
   end
   width = math.min(math.max(width + 4, 60), max_width)
 
-  local height = opts.height or math.min(#lines + 2, max_height)
+  -- Account for line wrapping when estimating height
+  local wrapped_lines = 0
+  for _, line in ipairs(lines) do
+    local line_width = math.max(vim.api.nvim_strwidth(line), 1)
+    wrapped_lines = wrapped_lines + math.ceil(line_width / width)
+  end
+  local height = opts.height or math.min(wrapped_lines + 2, max_height)
 
   local row = math.floor((vim.o.lines - height) / 2)
   local col = math.floor((vim.o.columns - width) / 2)
@@ -72,6 +78,9 @@ function M.open_float(title, lines, opts)
     footer = footer,
     footer_pos = "center",
   })
+
+  vim.wo[winid].wrap = true
+  vim.wo[winid].linebreak = true
 
   -- q / Esc close the float
   local function close_float()
