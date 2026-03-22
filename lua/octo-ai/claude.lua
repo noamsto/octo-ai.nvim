@@ -39,8 +39,15 @@ function M.ask(prompt, callback)
     end,
   })
 
+  if job_id <= 0 then
+    callback(nil, "Failed to start claude command (is '" .. config.claude_cmd .. "' on PATH?)")
+    return nil
+  end
+
   vim.fn.chansend(job_id, prompt)
   vim.fn.chanclose(job_id, "stdin")
+
+  return job_id
 end
 
 function M.build_refine_prompt(comment_body, diff_context, file_content)

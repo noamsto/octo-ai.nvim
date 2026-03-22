@@ -53,8 +53,18 @@ local function apply_diff_keymaps(bufnr)
   end, vim.tbl_extend("force", opts, { desc = "AI: Ask about PR" }))
 end
 
+local VALID_REFINE_MODES = { auto = true, ["on-demand"] = true, off = true }
+
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", defaults, opts or {})
+
+  if not VALID_REFINE_MODES[M.config.comment_refine] then
+    vim.notify(
+      "octo-ai: invalid comment_refine value '" .. tostring(M.config.comment_refine) .. "' (expected auto|on-demand|off)",
+      vim.log.levels.WARN
+    )
+    M.config.comment_refine = defaults.comment_refine
+  end
 
   local group = vim.api.nvim_create_augroup("OctoAI", { clear = true })
 
@@ -110,7 +120,7 @@ function M.setup(opts)
   end
 
   if M.config.comment_refine == "auto" then
-    require("octo-ai.refine").setup_auto_refine(group)
+    require("octo-ai.refine").setup_auto_refine()
   end
 end
 

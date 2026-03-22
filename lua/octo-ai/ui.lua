@@ -73,12 +73,14 @@ function M.open_float(title, lines, opts)
     footer_pos = "center",
   })
 
-  -- q always closes
-  vim.keymap.set("n", "q", function()
+  -- q / Esc close the float
+  local function close_float()
     if vim.api.nvim_win_is_valid(winid) then
       vim.api.nvim_win_close(winid, true)
     end
-  end, { buffer = bufnr, silent = true })
+  end
+  vim.keymap.set("n", "q", close_float, { buffer = bufnr, silent = true })
+  vim.keymap.set("n", "<Esc>", close_float, { buffer = bufnr, silent = true })
 
   -- Register action keymaps
   for key, def in pairs(key_defs) do
@@ -153,7 +155,10 @@ function M.spinner(msg)
   update()
   timer:start(100, 100, vim.schedule_wrap(update))
 
+  local dismissed = false
   return function()
+    if dismissed then return end
+    dismissed = true
     timer:stop()
     timer:close()
     vim.notify("Done", vim.log.levels.INFO, { title = "octo-ai", id = id, timeout = 2000 })

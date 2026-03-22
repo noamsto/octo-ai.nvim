@@ -3,6 +3,8 @@ local ui = require("octo-ai.ui")
 
 local M = {}
 
+local MAX_CONTENT_CHARS = 8000
+
 local function get_diff_context()
   local bufnr = vim.api.nvim_get_current_buf()
 
@@ -25,6 +27,9 @@ local function get_diff_context()
       if file then
         if file.right_lines then
           file_content = table.concat(file.right_lines, "\n")
+          if #file_content > MAX_CONTENT_CHARS then
+            file_content = file_content:sub(1, MAX_CONTENT_CHARS) .. "\n... (truncated)"
+          end
         end
 
         local win = vim.api.nvim_get_current_win()
@@ -38,8 +43,9 @@ local function get_diff_context()
   if #hunk_lines == 0 then
     local mode = vim.fn.mode()
     if mode == "v" or mode == "V" then
-      local start_line = vim.fn.line("v")
-      local end_line = vim.fn.line(".")
+      -- Capture visual positions before exiting visual mode
+      local start_line = vim.fn.getpos("v")[2]
+      local end_line = vim.fn.getpos(".")[2]
       if start_line > end_line then
         start_line, end_line = end_line, start_line
       end
@@ -60,6 +66,33 @@ local function get_diff_context()
   }
 end
 
+--- Show Claude's response in a float with copy/followup keys.
+local function show_response(context, result)
+  local lines = vim.split(result, "\n")
+  ui.open_float("AI — " .. context.path, lines, {
+    ft = "markdown",
+    keys = {
+      c = {
+        desc = "copy",
+        fn = function(_, winid)
+          vim.fn.setreg("+", result)
+          vim.api.nvim_win_close(winid, true)
+          vim.notify("Copied to clipboard", vim.log.levels.INFO)
+        end,
+      },
+      f = {
+        desc = "followup",
+        fn = function(_, winid)
+          vim.api.nvim_win_close(winid, true)
+          ui.input("Follow-up question", function(followup)
+            M.prompt_diff_with(followup, context)
+          end)
+        end,
+      },
+    },
+  })
+end
+
 function M.prompt_diff()
   local context = get_diff_context()
   if not context then
@@ -76,30 +109,7 @@ function M.prompt_diff()
         vim.notify(err, vim.log.levels.ERROR)
         return
       end
-
-      local lines = vim.split(result, "\n")
-      ui.open_float("AI — " .. context.path, lines, {
-        ft = "markdown",
-        keys = {
-          c = {
-            desc = "copy",
-            fn = function(_, winid)
-              vim.fn.setreg("+", result)
-              vim.api.nvim_win_close(winid, true)
-              vim.notify("Copied to clipboard — use \\ca to add as review comment", vim.log.levels.INFO)
-            end,
-          },
-          f = {
-            desc = "followup",
-            fn = function(_, winid)
-              vim.api.nvim_win_close(winid, true)
-              ui.input("Follow-up question", function(followup)
-                M.prompt_diff_with(followup, context)
-              end)
-            end,
-          },
-        },
-      })
+      show_response(context, result)
     end)
   end)
 end
@@ -115,30 +125,7 @@ function M.prompt_diff_with(question, context)
       vim.notify(err, vim.log.levels.ERROR)
       return
     end
-
-    local lines = vim.split(result, "\n")
-    ui.open_float("AI — " .. context.path, lines, {
-      ft = "markdown",
-      keys = {
-        c = {
-          desc = "copy",
-          fn = function(_, winid)
-            vim.fn.setreg("+", result)
-            vim.api.nvim_win_close(winid, true)
-            vim.notify("Copied to clipboard", vim.log.levels.INFO)
-          end,
-        },
-        f = {
-          desc = "followup",
-          fn = function(_, winid)
-            vim.api.nvim_win_close(winid, true)
-            ui.input("Follow-up question", function(followup)
-              M.prompt_diff_with(followup, context)
-            end)
-          end,
-        },
-      },
-    })
+    show_response(context, result)
   end)
 end
 
