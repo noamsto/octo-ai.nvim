@@ -155,6 +155,7 @@ function M.build_refine_prompt(comment_body, diff_context, file_content)
     "- Include brief code examples if they strengthen the point",
     "- Keep the reviewer's intent and tone",
     "- Keep it concise — don't add fluff",
+    "- Use short paragraphs and line breaks for readability — avoid walls of text",
     "- Return ONLY the improved comment text, no meta-commentary",
     "",
     "## Diff context",
