@@ -125,6 +125,7 @@ function M.refine_comment(feedback, session)
 
         ui.refine_float(comment_info.body, result, function(accepted_text)
           if not replace_comment_body(comment_info, accepted_text) then return end
+          if not vim.api.nvim_buf_is_valid(comment_info.bufnr) then return end
           vim.notify("Comment refined — saving...", vim.log.levels.INFO)
           vim.b[comment_info.bufnr]._octo_ai_skip_refine = true
           vim.api.nvim_buf_call(comment_info.bufnr, function()
