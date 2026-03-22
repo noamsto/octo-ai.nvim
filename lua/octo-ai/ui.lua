@@ -172,12 +172,16 @@ end
 --- @param on_refine fun(feedback: string)
 function M.refine_float(original, refined, on_accept, on_refine)
   local lines = {}
-  table.insert(lines, "── Original ──")
+  table.insert(lines, "## Original")
+  table.insert(lines, "")
   for _, l in ipairs(vim.split(original, "\n")) do
-    table.insert(lines, l)
+    table.insert(lines, "> " .. l)
   end
   table.insert(lines, "")
-  table.insert(lines, "── AI Refined ──")
+  table.insert(lines, "---")
+  table.insert(lines, "")
+  table.insert(lines, "## AI Refined")
+  table.insert(lines, "")
   for _, l in ipairs(vim.split(refined, "\n")) do
     table.insert(lines, l)
   end
