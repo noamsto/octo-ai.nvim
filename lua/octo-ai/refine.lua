@@ -16,6 +16,9 @@ local function get_comment_at_cursor()
     return nil
   end
 
+  -- Sync buffer text → metadata so body reflects current edits
+  buffer:update_metadata()
+
   local comment = buffer:get_comment_at_cursor()
   if not comment then
     return nil
@@ -174,6 +177,9 @@ function M.setup_auto_refine()
     if not buffer then
       return original_save(...)
     end
+
+    -- Sync buffer text → metadata so body reflects current edits
+    buffer:update_metadata()
 
     local comment = buffer:get_comment_at_cursor()
     if not comment or vim.trim(comment.body or "") == "" then
