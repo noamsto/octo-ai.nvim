@@ -1,6 +1,15 @@
 local M = {}
 
-local active_sessions = {}
+local active_sessions = {} -- session_name -> UUID
+
+local function generate_uuid()
+  local random = math.random
+  local template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+  return (template:gsub("[xy]", function(c)
+    local v = (c == "x") and random(0, 0xf) or random(8, 0xb)
+    return string.format("%x", v)
+  end))
+end
 
 --- Run a command asynchronously, collecting stdout.
 --- @param cmd string[] Command and arguments
@@ -89,12 +98,17 @@ function M.ask(prompt, opts, callback)
 
   local config = require("octo-ai").config
   local cmd = { config.claude_cmd, "-p" }
+  local is_new_session = false
 
   if opts.session then
-    if active_sessions[opts.session] then
-      vim.list_extend(cmd, { "-r", opts.session })
+    local session_id = active_sessions[opts.session]
+    if session_id then
+      vim.list_extend(cmd, { "-r", session_id })
     else
-      vim.list_extend(cmd, { "-n", opts.session })
+      is_new_session = true
+      session_id = generate_uuid()
+      active_sessions[opts.session] = session_id
+      vim.list_extend(cmd, { "--session-id", session_id, "-n", opts.session })
     end
   end
 
@@ -119,14 +133,14 @@ function M.ask(prompt, opts, callback)
     on_exit = function(_, code)
       vim.schedule(function()
         if code ~= 0 then
+          if is_new_session then
+            active_sessions[opts.session] = nil
+          end
           local err = vim.trim(table.concat(stderr_chunks, "\n"))
           local out = vim.trim(table.concat(stdout_chunks, "\n"))
           local msg = err ~= "" and err or out
           callback(nil, "Claude failed (exit " .. code .. "): " .. msg)
           return
-        end
-        if opts.session then
-          active_sessions[opts.session] = true
         end
         local result = vim.trim(table.concat(stdout_chunks, "\n"))
         callback(result)
